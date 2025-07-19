@@ -1,0 +1,54 @@
+// Set geometry for the city of San Francisco
+var sf = ee.FeatureCollection("projects/ee-harpecas/assets/SF_City_Bounds") // hand drawn geometry       
+            
+// Load NAIP imagery for 2022 and clip to study area
+var naip2022 = ee.ImageCollection('USDA/NAIP/DOQQ')
+  .filterBounds(sf)
+  .filterDate('2022-05-01', '2022-05-30')  // NAIP 2022 season
+  .mosaic()  // combine into one image
+  .clip(sf); // clip to San Francisco
+
+// // Check available bands (NAIP is usually: R, G, B, NIR)
+// print('NAIP 2022 bands:', naip2022.bandNames()); 
+
+// Add to map
+Map.centerObject(sf, 12);
+Map.addLayer(naip2022, {bands: ['R', 'G', 'B'], min: 0, max: 255}, 'NAIP 2022 RGB');
+
+// Calculate NDVI: (NIR - Red) / (NIR + Red)
+// NAIP band names: ['R', 'G', 'B', 'N']
+var ndvi = naip2022.normalizedDifference(['N', 'R']).multiply(1000).toInt().rename('NDVI');
+
+// alt without scaling
+// var ndvi = naip2022.normalizedDifference(['N', 'R']).rename('NDVI');
+
+// Add NDVI 2022 to map
+Map.addLayer(ndvi, {min: 0, max: 1, palette: ['white', 'green']}, 'NDVI Raw 2022');
+
+
+// Define NDVI threshold for vegetation !! Change to >0.2 if not scaling NDVI 
+var isVegetation = ndvi.gt(200);
+
+// Calculate vegetation estimate
+// Image of pixel area in m², masked to vegetation only
+var pixelArea = ee.Image.pixelArea().updateMask(isVegetation);
+
+// Calculate total area in m²
+var stats = pixelArea.reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: sf.geometry(),
+  scale: 1,
+  maxPixels: 1e10
+});
+var areaSqMeters = stats.get('area');
+var areaAcres = ee.Number(areaSqMeters).divide(4046.8564224);
+
+print('Vegetation Area (sq meters):', areaSqMeters);
+print('Vegetation Area (acres):', areaAcres);
+
+
+var areaSqMeters = stats.get('area');
+var areaAcres = ee.Number(areaSqMeters).divide(4046.8564224);
+
+print('Vegetation Area (sq meters):', areaSqMeters);
+print('Vegetation Area (acres):', areaAcres);
