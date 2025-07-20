@@ -1,5 +1,12 @@
+// San Francisco Total Vegetation Estimate 2022 
+// Description: 
+//      Calculate a total vegetation estimate for the city of San Francisco based on 2022 NAIP imagery data
+
+// ***************************************************************
+
 // Set geometry for the city of San Francisco
-var sf = ee.FeatureCollection("projects/ee-harpecas/assets/SF_City_Bounds") // hand drawn geometry       
+var sf = ee.FeatureCollection("projects/ee-harpecas/assets/SF_City_Bounds") // hand drawn geometry
+            
             
 // Load NAIP imagery for 2022 and clip to study area
 var naip2022 = ee.ImageCollection('USDA/NAIP/DOQQ')
@@ -17,17 +24,18 @@ Map.addLayer(naip2022, {bands: ['R', 'G', 'B'], min: 0, max: 255}, 'NAIP 2022 RG
 
 // Calculate NDVI: (NIR - Red) / (NIR + Red)
 // NAIP band names: ['R', 'G', 'B', 'N']
-var ndvi = naip2022.normalizedDifference(['N', 'R']).multiply(1000).toInt().rename('NDVI');
+var ndvi_int = naip2022.normalizedDifference(['N', 'R']).multiply(1000).toInt().rename('NDVI_Int');
 
-// alt without scaling
-// var ndvi = naip2022.normalizedDifference(['N', 'R']).rename('NDVI');
+// alt without scaling to use for area estimates 
+var ndvi_float = naip2022.normalizedDifference(['N', 'R']).rename('NDVI_float');
 
 // Add NDVI 2022 to map
-Map.addLayer(ndvi, {min: 0, max: 1000, palette: ['white', 'green']}, 'NDVI Raw 2022');
+Map.addLayer(ndvi_int, {min: 0, max: 1000, palette: ['white', 'green']}, 'NDVI Raw 2022');
 
 
-// Define NDVI threshold for vegetation !! Change to >0.2 if not scaling NDVI 
-var isVegetation = ndvi.gt(200);
+// Define NDVI threshold for vegetation !! two variables for an integer NDVI threshold and a decimal NDVI threshold
+var isVegetation = ndvi_float.gt(0.2);
+var isVegetation_int = ndvi_int.gt(200);
 
 // Calculate vegetation estimate
 // Image of pixel area in m², masked to vegetation only
@@ -40,15 +48,49 @@ var stats = pixelArea.reduceRegion({
   scale: 1,
   maxPixels: 1e10
 });
-var areaSqMeters = stats.get('area');
-var areaAcres = ee.Number(areaSqMeters).divide(4046.8564224);
-
-print('Vegetation Area (sq meters):', areaSqMeters);
-print('Vegetation Area (acres):', areaAcres);
-
 
 var areaSqMeters = stats.get('area');
 var areaAcres = ee.Number(areaSqMeters).divide(4046.8564224);
 
 print('Vegetation Area (sq meters):', areaSqMeters);
 print('Vegetation Area (acres):', areaAcres);
+
+// // ***************************************************************
+
+// Export Vegetation Layer products
+
+// Create a binary vegetation mask as uint8 
+var vegMask = isVegetation_int
+  .selfMask()            // hide all 0’s
+  .rename('vegetation')  // name the band for the labelProperty
+  .toUint8();            // cast to an integer type
+
+// Convert mask → polygons
+var vegetationVector = vegMask.reduceToVectors({
+  geometry: sf.geometry(),
+  scale: 2,
+  geometryType: 'polygon',
+  labelProperty: 'vegetation',
+  maxPixels: 1e10
+});
+
+// Export
+Export.table.toDrive({
+  collection: vegetationVector,
+  description: '2022Vegetation',
+  fileFormat: 'SHP'
+});
+
+// Export the vegetation mask as a GeoTIFF
+Export.image.toDrive({
+  image: vegMask,                     // the image to export
+  description: '2022_VegetationRaster', // task name
+  folder: 'EarthEngine',              // optional Drive folder
+  fileNamePrefix: 'vegetation_2022',    // prefix for the .tif filename
+  region: sf.geometry(),              // export only the SF footprint
+  scale: 2,                           // match your vectorization resolution
+  crs: 'EPSG:7131',                   // (NAD 1983 (2011) San Francisco CS13)
+  maxPixels: 1e10,                    // raise if you hit size limits
+  fileFormat: 'GeoTIFF'
+});
+
